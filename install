@@ -1,0 +1,208 @@
+#!/bin/bash
+
+# Minecraft Fabric Server Installer for Raspberry Pi 5
+# This script will guide you through setting up a Minecraft 1.26.2 Fabric server
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}This script must be run as root (use sudo)${NC}"
+   exit 1
+fi
+
+echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║  Minecraft Fabric Server Installer      ║${NC}"
+echo -e "${BLUE}║  Raspberry Pi 5 - Optimized             ║${NC}"
+echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+echo ""
+
+# Create server directory
+SERVER_DIR="/opt/minecraft-server"
+if [ ! -d "$SERVER_DIR" ]; then
+    echo -e "${YELLOW}Creating server directory at $SERVER_DIR${NC}"
+    mkdir -p "$SERVER_DIR"
+    chmod 755 "$SERVER_DIR"
+fi
+
+cd "$SERVER_DIR"
+
+# ============ STEP 1: Java Installation ============
+echo -e "${BLUE}[1/5] Checking Java Installation${NC}"
+if ! command -v java &> /dev/null; then
+    echo -e "${YELLOW}Java not found. Installing Java 25...${NC}"
+    apt-get update
+    apt-get install -y openjdk-25-jre-headless
+else
+    JAVA_VERSION=$(java -version 2>&1 | grep -oP 'version "\K[^"]+')
+    echo -e "${GREEN}✓ Java already installed: $JAVA_VERSION${NC}"
+fi
+echo ""
+
+# ============ STEP 2: Minecraft Version Selection ============
+echo -e "${BLUE}[2/5] Minecraft Version Selection${NC}"
+echo "Available Minecraft versions:"
+echo "  1. 1.26.2 (Latest - Recommended)"
+echo "  2. 1.26.1"
+echo "  3. 1.26.0"
+echo "  4. 1.25.4"
+read -p "Select version (1-4): " VERSION_CHOICE
+
+case $VERSION_CHOICE in
+    1) MC_VERSION="1.26.2" ;;
+    2) MC_VERSION="1.26.1" ;;
+    3) MC_VERSION="1.26.0" ;;
+    4) MC_VERSION="1.25.4" ;;
+    *) 
+        echo -e "${RED}Invalid choice. Defaulting to 1.26.2${NC}"
+        MC_VERSION="1.26.2"
+        ;;
+esac
+
+echo -e "${GREEN}✓ Selected Minecraft $MC_VERSION${NC}"
+echo ""
+
+# ============ STEP 3: Download Fabric Installer ============
+echo -e "${BLUE}[3/5] Downloading Fabric Installer${NC}"
+echo "Fetching latest Fabric installer..."
+
+FABRIC_INSTALLER_URL="https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar"
+INSTALLER_JAR="fabric-installer.jar"
+
+if [ -f "$INSTALLER_JAR" ]; then
+    echo -e "${YELLOW}Fabric installer already exists${NC}"
+else
+    if wget -q "$FABRIC_INSTALLER_URL" -O "$INSTALLER_JAR" 2>/dev/null; then
+        echo -e "${GREEN}✓ Fabric installer downloaded${NC}"
+    else
+        echo -e "${RED}Failed to download Fabric installer${NC}"
+        echo "You can manually download from: $FABRIC_INSTALLER_URL"
+        exit 1
+    fi
+fi
+echo ""
+
+# ============ STEP 4: Install Fabric ============
+echo -e "${BLUE}[4/5] Installing Fabric Server${NC}"
+echo "This may take a minute..."
+
+SERVER_JAR="server.jar"
+
+# Run fabric installer
+java -jar "$INSTALLER_JAR" server -mcversion "$MC_VERSION" -loader latest -installer latest -downloadMinecraft
+
+if [ -f "server-$MC_VERSION.jar" ]; then
+    mv "server-$MC_VERSION.jar" "$SERVER_JAR"
+fi
+
+if [ ! -f "$SERVER_JAR" ]; then
+    echo -e "${RED}Failed to create server.jar${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Fabric server installed${NC}"
+echo ""
+
+# ============ STEP 5: EULA Agreement ============
+echo -e "${BLUE}[5/5] EULA Agreement${NC}"
+echo "You must agree to the Minecraft EULA to proceed."
+echo "Read it at: https://account.mojang.com/documents/minecraft_eula"
+echo ""
+read -p "Do you agree to the Minecraft EULA? (yes/no): " EULA_AGREE
+
+if [ "$EULA_AGREE" = "yes" ] || [ "$EULA_AGREE" = "y" ]; then
+    echo "eula=true" > eula.txt
+    echo -e "${GREEN}✓ EULA accepted${NC}"
+else
+    echo -e "${RED}EULA must be accepted to continue${NC}"
+    exit 1
+fi
+echo ""
+
+# ============ SERVER CONFIGURATION ============
+echo -e "${BLUE}Server Configuration${NC}"
+read -p "Enter server name (default: Minecraft Fabric Server): " SERVER_NAME
+SERVER_NAME=${SERVER_NAME:-"Minecraft Fabric Server"}
+
+read -p "Enter max players (default: 10): " MAX_PLAYERS
+MAX_PLAYERS=${MAX_PLAYERS:-10}
+
+read -p "Enter server port (default: 25565): " SERVER_PORT
+SERVER_PORT=${SERVER_PORT:-25565}
+
+# Create/update server.properties
+cat > server.properties << EOF
+eula=true
+gamemode=survival
+difficulty=2
+level-name=world
+server-port=$SERVER_PORT
+max-players=$MAX_PLAYERS
+motd=$SERVER_NAME
+online-mode=false
+pvp=true
+enable-command-blocks=false
+view-distance=10
+simulation-distance=8
+spawn-protection=16
+allow-nether=true
+allow-flight=false
+difficulty=2
+level-seed=
+enable-jmx-monitoring=false
+network-compression-threshold=256
+max-tick-time=60000
+enable-rcon=false
+rcon.password=
+rcon.port=25575
+require-resource-pack=false
+resource-pack=
+resource-pack-sha1=
+resource-pack-prompt=
+EOF
+
+echo -e "${GREEN}✓ server.properties configured${NC}"
+echo ""
+
+# ============ STARTUP SCRIPT ============
+echo -e "${BLUE}Creating startup script${NC}"
+
+cat > start.sh << 'STARTEOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+echo "Starting Minecraft Fabric Server..."
+java -Xmx6G -Xms4G -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UnlinkSymbolsAnchorStackChunks server.jar nogui
+STARTEOF
+
+chmod +x start.sh
+echo -e "${GREEN}✓ start.sh created${NC}"
+echo ""
+
+# ============ COMPLETION ============
+echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║        Installation Complete!          ║${NC}"
+echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${GREEN}Server directory: $SERVER_DIR${NC}"
+echo -e "${GREEN}Minecraft Version: $MC_VERSION${NC}"
+echo -e "${GREEN}Server Name: $SERVER_NAME${NC}"
+echo -e "${GREEN}Max Players: $MAX_PLAYERS${NC}"
+echo -e "${GREEN}Port: $SERVER_PORT${NC}"
+echo ""
+echo -e "${YELLOW}Next steps:${NC}"
+echo "1. Start the server: cd $SERVER_DIR && ./start.sh"
+echo "2. Connect to your server at: YOUR_PI_IP:$SERVER_PORT"
+echo "3. Add mods to: $SERVER_DIR/mods/"
+echo ""
+echo -e "${YELLOW}Useful commands:${NC}"
+echo "  ./start.sh              - Start the server"
+echo "  pkill -f server.jar     - Stop the server"
+echo "  tail -f logs/latest.log - View server logs"
+echo ""

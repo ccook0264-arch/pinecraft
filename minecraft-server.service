@@ -1,0 +1,19 @@
+[Unit]
+Description=Minecraft Fabric Server
+After=network.target
+
+[Service]
+Type=simple
+User=minecraft
+WorkingDirectory=/opt/minecraft-server
+ExecStart=/opt/minecraft-server/start.sh
+Restart=on-failure
+RestartSec=10
+
+# Performance settings
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=minecraft
+
+[Install]
+WantedBy=multi-user.target
