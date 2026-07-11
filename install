@@ -262,18 +262,25 @@ download_fabric() {
   mkdir -p "$SERVER_ROOT"
   rm -f "$SERVER_ROOT/server.jar"
   rm -f "$SERVER_ROOT/fabric-server-launch.jar"
-  local installer_jar="$SERVER_ROOT/fabric-installer.jar"
   local loader_json
-  loader_json="$(curl -fsSL "https://meta.fabricmc.net/v2/versions/loader/$resolved")"
+  loader_json="$(curl -fsSL "https://meta.fabricmc.net/v2/versions/loader/$resolved" 2>/dev/null || true)"
   local loader_version
   loader_version="$(printf '%s\n' "$loader_json" | jq -r '.[0].loader.version // empty')"
   local installer_version
   installer_version="$(printf '%s\n' "$loader_json" | jq -r '.[0].launcherMeta.version // .[0].version // "latest"')"
-  if [[ -z "$loader_version" ]]; then
+  if [[ -z "$loader_version" || -z "$installer_version" ]]; then
     echo "Could not resolve Fabric loader for $resolved"
     exit 1
   fi
 
+  local launcher_url="https://meta.fabricmc.net/v2/versions/loader/$resolved/$loader_version/$installer_version/server/jar"
+  if curl -fsSL "$launcher_url" -o "$SERVER_ROOT/fabric-server-launch.jar" 2>/dev/null; then
+    cp "$SERVER_ROOT/fabric-server-launch.jar" "$SERVER_ROOT/server.jar"
+    mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs"
+    return 0
+  fi
+
+  local installer_jar="$SERVER_ROOT/fabric-installer.jar"
   curl -fsSL "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar" -o "$installer_jar"
 
   if ! (cd "$SERVER_ROOT" && java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -downloadMinecraft >/dev/null 2>&1); then
@@ -281,7 +288,7 @@ download_fabric() {
     (cd "$SERVER_ROOT" && java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -installer "$installer_version" -downloadMinecraft >/dev/null 2>&1) || true
   fi
 
-  mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs" "$SERVER_ROOT/plugins"
+  mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs"
   if [[ -f "$SERVER_ROOT/fabric-server-launch.jar" ]]; then
     cp "$SERVER_ROOT/fabric-server-launch.jar" "$SERVER_ROOT/server.jar"
     return 0
@@ -314,8 +321,12 @@ download_paper() {
 
 write_server_files() {
   local operator_name="$1"
+  local server_type="${2:-}"
   mkdir -p "$SERVER_ROOT"
-  mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs" "$SERVER_ROOT/plugins"
+  mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs"
+  if [[ "$server_type" == "paper" ]]; then
+    mkdir -p "$SERVER_ROOT/plugins"
+  fi
   cat > "$SERVER_ROOT/eula.txt" <<'EOF'
 eula=true
 EOF
@@ -355,7 +366,10 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$SERVER_ROOT"
-mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs" "$SERVER_ROOT/plugins"
+mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs"
+if [[ "${server_type:-}" == "paper" ]]; then
+  mkdir -p "$SERVER_ROOT/plugins"
+fi
 if command -v java >/dev/null 2>&1; then
   exec java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/server.jar" --nogui
 else
@@ -485,7 +499,7 @@ main() {
   local java_home
   java_home="$(detect_java_home "$java_version")"
 
-  write_server_files "$operator_name"
+  write_server_files "$operator_name" "$server_type"
   case "$server_type" in
     vanilla)
       download_vanilla "$resolved_version"
