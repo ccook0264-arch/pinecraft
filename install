@@ -8,12 +8,46 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_ROOT="$SCRIPT_DIR/server"
 SERVICE_FILE="$SCRIPT_DIR/minecraft-server.service"
-RUN_USER="${SUDO_USER:-pi}"
+RUN_USER="${SUDO_USER:-}"
+if [[ -z "$RUN_USER" ]]; then
+  if id -u ubuntu >/dev/null 2>&1; then
+    RUN_USER="ubuntu"
+  elif id -u pi >/dev/null 2>&1; then
+    RUN_USER="pi"
+  else
+    RUN_USER="root"
+  fi
+fi
 RUN_HOME="$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6 || true)"
 
 if [[ -z "$RUN_HOME" ]]; then
   RUN_HOME="/home/$RUN_USER"
 fi
+
+is_supported_linux() {
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}" in
+      ubuntu|debian)
+        return 0
+        ;;
+    esac
+    case "${ID_LIKE:-}" in
+      *ubuntu*|*debian*)
+        return 0
+        ;;
+    esac
+  fi
+  return 1
+}
+
+require_supported_linux() {
+  if ! is_supported_linux; then
+    echo "This installer is intended for Ubuntu/Debian Linux (including Ubuntu Server on Raspberry Pi)."
+    exit 1
+  fi
+}
 
 SUPPORTED_VERSIONS=(
   "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2"
@@ -212,21 +246,39 @@ download_fabric() {
     echo "Could not resolve Fabric loader for $resolved"
     exit 1
   fi
-  curl -fsSL "https://meta.fabricmc.net/v2/versions/loader/$resolved/$loader_version/$installer_version/server/jar" -o "$SERVER_ROOT/server.jar"
-  if [[ ! -f "$SERVER_ROOT/server.jar" ]]; then
-    curl -fsSL "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar" -o "$installer_jar"
+
+  curl -fsSL "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar" -o "$installer_jar"
+
+  if ! java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -downloadMinecraft >/dev/null 2>&1; then
+    echo "Fabric installer failed for $resolved; trying fallback mode."
     java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -installer "$installer_version" -downloadMinecraft >/dev/null 2>&1 || true
   fi
+
+  if [[ -f "$SERVER_ROOT/server.jar" ]]; then
+    return 0
+  fi
+  if [[ -f "$SERVER_ROOT/fabric-server-launch.jar" ]]; then
+    cp "$SERVER_ROOT/fabric-server-launch.jar" "$SERVER_ROOT/server.jar"
+    return 0
+  fi
+
+  echo "Fabric server jar was not produced for $resolved"
+  exit 1
 }
 
 download_paper() {
   local resolved="$1"
+  mkdir -p "$SERVER_ROOT"
   local builds_json
-  builds_json="$(curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$resolved")"
+  builds_json="$(curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$resolved" 2>/dev/null || true)"
   local build
-  build="$(printf '%s\n' "$builds_json" | jq -r '.builds[-1] // empty')"
+  build="$(printf '%s\n' "$builds_json" | jq -r '.builds[-1] // empty' 2>/dev/null || true)"
   if [[ -z "$build" ]]; then
-    echo "Could not resolve a Paper build for $resolved"
+    echo "Could not resolve a Paper build for $resolved; falling back to a direct URL attempt."
+    if curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$resolved/builds/latest/downloads/paper-$resolved-latest.jar" -o "$SERVER_ROOT/server.jar" 2>/dev/null; then
+      return 0
+    fi
+    echo "Paper download failed for $resolved"
     exit 1
   fi
   curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$resolved/builds/$build/downloads/paper-$resolved-$build.jar" -o "$SERVER_ROOT/server.jar"
@@ -341,6 +393,7 @@ EOF
 }
 
 main() {
+  require_supported_linux
   require_root
   install_prerequisites
 

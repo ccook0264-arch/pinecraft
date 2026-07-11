@@ -1,6 +1,6 @@
 # Raspberry Pi Minecraft Server Installer
 
-This repository provides a lightweight installer for a Raspberry Pi that can prepare a Minecraft server for several versions, including:
+This repository provides a lightweight installer for Ubuntu Linux and Ubuntu Server on Raspberry Pi that can prepare a Minecraft server for several versions, including:
 
 - 1.20.4
 - 1.20.5
@@ -56,5 +56,5 @@ The installer now:
 
 ## Notes
 
-- This installer is designed for Debian/Ubuntu-based Raspberry Pi OS systems.
+- This installer is designed for Ubuntu Linux and Ubuntu Server on Raspberry Pi (and other Debian/Ubuntu-based systems).
 - The script will install the server into the local project folder under the server directory and generate a service and startup script for convenience.
