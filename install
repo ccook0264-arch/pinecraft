@@ -182,11 +182,18 @@ install_prerequisites() {
 install_java() {
   local java_version="$1"
   export DEBIAN_FRONTEND=noninteractive
-  if [[ "$java_version" == "17" ]]; then
-    apt-get install -y openjdk-17-jdk-headless || apt-get install -y openjdk-17-jre-headless || true
-  else
-    apt-get install -y openjdk-21-jdk-headless || apt-get install -y openjdk-21-jre-headless || true
-  fi
+  case "$java_version" in
+    17)
+      apt-get install -y openjdk-17-jdk-headless || apt-get install -y openjdk-17-jre-headless || true
+      ;;
+    25)
+      apt-get install -y openjdk-25-jdk-headless || apt-get install -y openjdk-25-jre-headless || true
+      apt-get install -y openjdk-21-jdk-headless || true
+      ;;
+    *)
+      apt-get install -y openjdk-21-jdk-headless || apt-get install -y openjdk-21-jre-headless || true
+      ;;
+  esac
   if command -v java >/dev/null 2>&1; then
     java -version >/dev/null 2>&1 || true
   fi
@@ -208,9 +215,10 @@ detect_java_home() {
     "/usr/lib/jvm/java-${java_version}-openjdk-armhf"
     "/usr/lib/jvm/java-${java_version}-openjdk-amd64"
     "/usr/lib/jvm/java-${java_version}-openjdk"
-    "/usr/lib/jvm/default-java"
+    "/usr/lib/jvm/java-25-openjdk"
     "/usr/lib/jvm/java-21-openjdk"
     "/usr/lib/jvm/java-17-openjdk"
+    "/usr/lib/jvm/default-java"
   )
   for candidate in "${candidates[@]}"; do
     if [[ -d "$candidate" ]]; then
