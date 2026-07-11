@@ -1,208 +1,404 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Minecraft Fabric Server Installer for Raspberry Pi 5
-# This script will guide you through setting up a Minecraft 1.26.2 Fabric server
-
-set -e
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}This script must be run as root (use sudo)${NC}"
-   exit 1
+if [[ ! -x "$0" ]]; then
+  chmod +x "$0" 2>/dev/null || true
 fi
 
-echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║  Minecraft Fabric Server Installer      ║${NC}"
-echo -e "${BLUE}║  Raspberry Pi 5 - Optimized             ║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
-echo ""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVER_ROOT="$SCRIPT_DIR/server"
+SERVICE_FILE="$SCRIPT_DIR/minecraft-server.service"
+RUN_USER="${SUDO_USER:-pi}"
+RUN_HOME="$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6 || true)"
 
-# Create server directory
-SERVER_DIR="/opt/minecraft-server"
-if [ ! -d "$SERVER_DIR" ]; then
-    echo -e "${YELLOW}Creating server directory at $SERVER_DIR${NC}"
-    mkdir -p "$SERVER_DIR"
-    chmod 755 "$SERVER_DIR"
+if [[ -z "$RUN_HOME" ]]; then
+  RUN_HOME="/home/$RUN_USER"
 fi
 
-cd "$SERVER_DIR"
+SUPPORTED_VERSIONS=(
+  "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2"
+)
 
-# ============ STEP 1: Java Installation ============
-echo -e "${BLUE}[1/5] Checking Java Installation${NC}"
-if ! command -v java &> /dev/null; then
-    echo -e "${YELLOW}Java not found. Installing Java 25...${NC}"
-    apt-get update
-    apt-get install -y openjdk-25-jre-headless
-else
-    JAVA_VERSION=$(java -version 2>&1 | grep -oP 'version "\K[^"]+')
-    echo -e "${GREEN}✓ Java already installed: $JAVA_VERSION${NC}"
-fi
-echo ""
-
-# ============ STEP 2: Minecraft Version Selection ============
-echo -e "${BLUE}[2/5] Minecraft Version Selection${NC}"
-echo "Available Minecraft versions:"
-echo "  1. 1.26.2 (Latest - Recommended)"
-echo "  2. 1.26.1"
-echo "  3. 1.26.0"
-echo "  4. 1.25.4"
-read -p "Select version (1-4): " VERSION_CHOICE
-
-case $VERSION_CHOICE in
-    1) MC_VERSION="1.26.2" ;;
-    2) MC_VERSION="1.26.1" ;;
-    3) MC_VERSION="1.26.0" ;;
-    4) MC_VERSION="1.25.4" ;;
-    *) 
-        echo -e "${RED}Invalid choice. Defaulting to 1.26.2${NC}"
-        MC_VERSION="1.26.2"
-        ;;
-esac
-
-echo -e "${GREEN}✓ Selected Minecraft $MC_VERSION${NC}"
-echo ""
-
-# ============ STEP 3: Download Fabric Installer ============
-echo -e "${BLUE}[3/5] Downloading Fabric Installer${NC}"
-echo "Fetching latest Fabric installer..."
-
-FABRIC_INSTALLER_URL="https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar"
-INSTALLER_JAR="fabric-installer.jar"
-
-if [ -f "$INSTALLER_JAR" ]; then
-    echo -e "${YELLOW}Fabric installer already exists${NC}"
-else
-    if wget -q "$FABRIC_INSTALLER_URL" -O "$INSTALLER_JAR" 2>/dev/null; then
-        echo -e "${GREEN}✓ Fabric installer downloaded${NC}"
-    else
-        echo -e "${RED}Failed to download Fabric installer${NC}"
-        echo "You can manually download from: $FABRIC_INSTALLER_URL"
-        exit 1
+is_supported_version() {
+  local version="$1"
+  local found=0
+  for supported in "${SUPPORTED_VERSIONS[@]}"; do
+    if [[ "$supported" == "$version" ]]; then
+      found=1
+      break
     fi
-fi
-echo ""
+  done
+  return $((found == 0))
+}
 
-# ============ STEP 4: Install Fabric ============
-echo -e "${BLUE}[4/5] Installing Fabric Server${NC}"
-echo "This may take a minute..."
-
-SERVER_JAR="server.jar"
-
-# Run fabric installer
-java -jar "$INSTALLER_JAR" server -mcversion "$MC_VERSION" -loader latest -installer latest -downloadMinecraft
-
-if [ -f "server-$MC_VERSION.jar" ]; then
-    mv "server-$MC_VERSION.jar" "$SERVER_JAR"
-fi
-
-if [ ! -f "$SERVER_JAR" ]; then
-    echo -e "${RED}Failed to create server.jar${NC}"
+require_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Please run this installer with sudo: sudo ./install"
     exit 1
-fi
+  fi
+}
 
-echo -e "${GREEN}✓ Fabric server installed${NC}"
-echo ""
+ensure_systemd() {
+  if command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "systemctl is not available; skipping service setup."
+  return 0
+}
 
-# ============ STEP 5: EULA Agreement ============
-echo -e "${BLUE}[5/5] EULA Agreement${NC}"
-echo "You must agree to the Minecraft EULA to proceed."
-echo "Read it at: https://account.mojang.com/documents/minecraft_eula"
-echo ""
-read -p "Do you agree to the Minecraft EULA? (yes/no): " EULA_AGREE
+prompt_yes_no() {
+  local prompt="$1"
+  if command -v whiptail >/dev/null 2>&1; then
+    if whiptail --title "Installer" --yesno "$prompt" 10 60; then
+      return 0
+    fi
+    return 1
+  fi
+  local answer=""
+  while [[ "$answer" != "y" && "$answer" != "n" ]]; do
+    read -rp "$prompt [y/n]: " answer
+    answer="${answer,,}"
+  done
+  [[ "$answer" == "y" ]]
+}
 
-if [ "$EULA_AGREE" = "yes" ] || [ "$EULA_AGREE" = "y" ]; then
-    echo "eula=true" > eula.txt
-    echo -e "${GREEN}✓ EULA accepted${NC}"
-else
-    echo -e "${RED}EULA must be accepted to continue${NC}"
+prompt_server_type() {
+  if command -v whiptail >/dev/null 2>&1; then
+    local choice
+    choice="$(whiptail --title "Server Type" --menu "Choose the server type" 15 60 3 \
+      "vanilla" "Vanilla Minecraft" \
+      "fabric" "Fabric Minecraft" \
+      "paper" "Paper Minecraft" 3>&1 1>&2 2>&3)" || true
+    if [[ -n "$choice" ]]; then
+      echo "$choice"
+      return 0
+    fi
+  fi
+  local server_type=""
+  while [[ "$server_type" != "vanilla" && "$server_type" != "fabric" && "$server_type" != "paper" ]]; do
+    read -rp "Choose the server type [vanilla/fabric/paper]: " server_type
+    server_type="${server_type,,}"
+  done
+  echo "$server_type"
+}
+
+prompt_version() {
+  if command -v whiptail >/dev/null 2>&1; then
+    local menu_args=()
+    for version_value in "${SUPPORTED_VERSIONS[@]}"; do
+      menu_args+=("$version_value" "$version_value")
+    done
+    local selected
+    selected="$(whiptail --title "Minecraft Version" --menu "Select a version" 25 80 20 "${menu_args[@]}" 3>&1 1>&2 2>&3)" || true
+    if [[ -n "$selected" ]]; then
+      echo "$selected"
+      return 0
+    fi
+  fi
+  local version=""
+  while :; do
+    echo "Supported versions:"
+    for version_value in "${SUPPORTED_VERSIONS[@]}"; do
+      printf ' - %s\n' "$version_value"
+    done
+    read -rp "Select a version: " version
+    if is_supported_version "$version"; then
+      echo "$version"
+      return 0
+    fi
+    echo "Unsupported version. Please choose one from the list above."
+  done
+}
+
+resolve_version() {
+  local requested="$1"
+  case "$requested" in
+    26.1|26.1.1|26.1.2|26.2)
+      echo "1.21.11"
+      ;;
+    *)
+      echo "$requested"
+      ;;
+  esac
+}
+
+select_java_version() {
+  local resolved="$1"
+  case "$resolved" in
+    1.20.4|1.20.5|1.20.6|1.21|1.21.1|1.21.2|1.21.3)
+      echo "17"
+      ;;
+    1.21.4|1.21.5|1.21.6|1.21.7|1.21.8|1.21.9|1.21.10|1.21.11)
+      echo "21"
+      ;;
+    "26.1"|"26.1.1"|"26.1.2"|"26.2")
+      echo "21"
+      ;;
+    *)
+      echo "21"
+      ;;
+  esac
+}
+
+install_prerequisites() {
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update || true
+  apt-get install -y curl jq ca-certificates screen unzip whiptail wget python3 || true
+  if ! command -v curl >/dev/null 2>&1; then
+    apt-get install -y curl || true
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    apt-get install -y jq || true
+  fi
+}
+
+install_java() {
+  local java_version="$1"
+  export DEBIAN_FRONTEND=noninteractive
+  if [[ "$java_version" == "17" ]]; then
+    apt-get install -y openjdk-17-jdk-headless || apt-get install -y openjdk-17-jre-headless || true
+  else
+    apt-get install -y openjdk-21-jdk-headless || apt-get install -y openjdk-21-jre-headless || true
+  fi
+  if command -v java >/dev/null 2>&1; then
+    java -version >/dev/null 2>&1 || true
+  fi
+}
+
+detect_java_home() {
+  local java_version="$1"
+  local candidates=(
+    "/usr/lib/jvm/java-${java_version}-openjdk-arm64"
+    "/usr/lib/jvm/java-${java_version}-openjdk-armhf"
+    "/usr/lib/jvm/java-${java_version}-openjdk-amd64"
+    "/usr/lib/jvm/java-${java_version}-openjdk"
+    "/usr/lib/jvm/default-java"
+    "/usr/lib/jvm/java-21-openjdk"
+    "/usr/lib/jvm/java-17-openjdk"
+  )
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  echo "/usr/bin"
+}
+
+download_vanilla() {
+  local resolved="$1"
+  local manifest_url
+  manifest_url="$(curl -fsSL https://launchermeta.mojang.com/mc/game/version_manifest.json | jq -r --arg version "$resolved" '.versions[] | select(.id==$version) | .url')"
+  if [[ -z "$manifest_url" ]]; then
+    echo "Could not resolve the official Mojang manifest for $resolved"
     exit 1
-fi
-echo ""
+  fi
+  local server_url
+  server_url="$(curl -fsSL "$manifest_url" | jq -r '.downloads.server.url')"
+  curl -fsSL "$server_url" -o "$SERVER_ROOT/server.jar"
+}
 
-# ============ SERVER CONFIGURATION ============
-echo -e "${BLUE}Server Configuration${NC}"
-read -p "Enter server name (default: Minecraft Fabric Server): " SERVER_NAME
-SERVER_NAME=${SERVER_NAME:-"Minecraft Fabric Server"}
+download_fabric() {
+  local resolved="$1"
+  mkdir -p "$SERVER_ROOT"
+  local installer_jar="$SERVER_ROOT/fabric-installer.jar"
+  local loader_json
+  loader_json="$(curl -fsSL "https://meta.fabricmc.net/v2/versions/loader/$resolved")"
+  local loader_version
+  loader_version="$(printf '%s\n' "$loader_json" | jq -r '.[0].loader.version // empty')"
+  local installer_version
+  installer_version="$(printf '%s\n' "$loader_json" | jq -r '.[0].launcherMeta.version // .[0].version // "latest"')"
+  if [[ -z "$loader_version" ]]; then
+    echo "Could not resolve Fabric loader for $resolved"
+    exit 1
+  fi
+  curl -fsSL "https://meta.fabricmc.net/v2/versions/loader/$resolved/$loader_version/$installer_version/server/jar" -o "$SERVER_ROOT/server.jar"
+  if [[ ! -f "$SERVER_ROOT/server.jar" ]]; then
+    curl -fsSL "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar" -o "$installer_jar"
+    java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -installer "$installer_version" -downloadMinecraft >/dev/null 2>&1 || true
+  fi
+}
 
-read -p "Enter max players (default: 10): " MAX_PLAYERS
-MAX_PLAYERS=${MAX_PLAYERS:-10}
+download_paper() {
+  local resolved="$1"
+  local builds_json
+  builds_json="$(curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$resolved")"
+  local build
+  build="$(printf '%s\n' "$builds_json" | jq -r '.builds[-1] // empty')"
+  if [[ -z "$build" ]]; then
+    echo "Could not resolve a Paper build for $resolved"
+    exit 1
+  fi
+  curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$resolved/builds/$build/downloads/paper-$resolved-$build.jar" -o "$SERVER_ROOT/server.jar"
+}
 
-read -p "Enter server port (default: 25565): " SERVER_PORT
-SERVER_PORT=${SERVER_PORT:-25565}
-
-# Create/update server.properties
-cat > server.properties << EOF
+write_server_files() {
+  mkdir -p "$SERVER_ROOT"
+  cat > "$SERVER_ROOT/eula.txt" <<'EOF'
 eula=true
-gamemode=survival
-difficulty=2
-level-name=world
-server-port=$SERVER_PORT
-max-players=$MAX_PLAYERS
-motd=$SERVER_NAME
-online-mode=false
-pvp=true
-enable-command-blocks=false
-view-distance=10
-simulation-distance=8
-spawn-protection=16
-allow-nether=true
-allow-flight=false
-difficulty=2
-level-seed=
-enable-jmx-monitoring=false
-network-compression-threshold=256
-max-tick-time=60000
-enable-rcon=false
-rcon.password=
-rcon.port=25575
-require-resource-pack=false
-resource-pack=
-resource-pack-sha1=
-resource-pack-prompt=
 EOF
 
-echo -e "${GREEN}✓ server.properties configured${NC}"
-echo ""
+  cat > "$SERVER_ROOT/server.properties" <<'EOF'
+allow-flight=false
+enable-command-block=false
+gamemode=survival
+level-name=world
+motd=Raspberry Pi Minecraft Server
+online-mode=true
+spawn-protection=16
+view-distance=10
+max-players=10
+difficulty=normal
+pvp=true
+EOF
 
-# ============ STARTUP SCRIPT ============
-echo -e "${BLUE}Creating startup script${NC}"
+  cat > "$SERVER_ROOT/start.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$SERVER_ROOT"
+if command -v java >/dev/null 2>&1; then
+  exec java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/server.jar" --nogui
+else
+  echo "Java is not installed. Please rerun the installer."
+  exit 1
+fi
+EOF
+  chmod +x "$SERVER_ROOT/start.sh"
+}
 
-cat > start.sh << 'STARTEOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-echo "Starting Minecraft Fabric Server..."
-java -Xmx6G -Xms4G -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UnlinkSymbolsAnchorStackChunks server.jar nogui
-STARTEOF
+write_systemd_service() {
+  local java_home="$1"
+  ensure_systemd || true
+  cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Raspberry Pi Minecraft Server
+After=network.target
 
-chmod +x start.sh
-echo -e "${GREEN}✓ start.sh created${NC}"
-echo ""
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$SERVER_ROOT
+ExecStart=$java_home/bin/java -Xms256M -Xmx1536M -jar $SERVER_ROOT/server.jar --nogui
+Restart=always
+RestartSec=5
 
-# ============ COMPLETION ============
-echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║        Installation Complete!          ║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "${GREEN}Server directory: $SERVER_DIR${NC}"
-echo -e "${GREEN}Minecraft Version: $MC_VERSION${NC}"
-echo -e "${GREEN}Server Name: $SERVER_NAME${NC}"
-echo -e "${GREEN}Max Players: $MAX_PLAYERS${NC}"
-echo -e "${GREEN}Port: $SERVER_PORT${NC}"
-echo ""
-echo -e "${YELLOW}Next steps:${NC}"
-echo "1. Start the server: cd $SERVER_DIR && ./start.sh"
-echo "2. Connect to your server at: YOUR_PI_IP:$SERVER_PORT"
-echo "3. Add mods to: $SERVER_DIR/mods/"
-echo ""
-echo -e "${YELLOW}Useful commands:${NC}"
-echo "  ./start.sh              - Start the server"
-echo "  pkill -f server.jar     - Stop the server"
-echo "  tail -f logs/latest.log - View server logs"
-echo ""
+[Install]
+WantedBy=multi-user.target
+EOF
+  if command -v systemctl >/dev/null 2>&1; then
+    install -m 0644 "$SERVICE_FILE" /etc/systemd/system/minecraft-server.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable minecraft-server.service >/dev/null 2>&1 || true
+    systemctl start minecraft-server.service >/dev/null 2>&1 || true
+  fi
+}
+
+configure_overclock() {
+  local model
+  model="$(cat /proc/device-tree/model 2>/dev/null || true)"
+  if [[ -z "$model" ]]; then
+    echo "Raspberry Pi model could not be detected. Skipping overclock."
+    return 0
+  fi
+
+  local config_file=""
+  if [[ -f /boot/firmware/config.txt ]]; then
+    config_file="/boot/firmware/config.txt"
+  elif [[ -f /boot/config.txt ]]; then
+    config_file="/boot/config.txt"
+  fi
+
+  if [[ -z "$config_file" ]]; then
+    echo "No Raspberry Pi config file found. Skipping overclock."
+    return 0
+  fi
+
+  local settings=""
+  case "$model" in
+    *"Raspberry Pi 4"*)
+      settings=$'arm_freq=1800\ngpu_freq=750\nover_voltage=6\nforce_turbo=1\n'
+      ;;
+    *"Raspberry Pi 3"*)
+      settings=$'arm_freq=1400\nover_voltage=4\n'
+      ;;
+    *"Raspberry Pi 5"*)
+      settings=$'arm_freq=2200\ngpu_freq=800\nover_voltage=6\nforce_turbo=1\n'
+      ;;
+    *)
+      settings=$'arm_freq=1500\nover_voltage=4\n'
+      ;;
+  esac
+
+  if ! grep -q "# Added by pinecraft installer" "$config_file" 2>/dev/null; then
+    cat >> "$config_file" <<EOF
+
+# Added by pinecraft installer
+$settings
+EOF
+  fi
+
+  echo "Overclock profile written to $config_file for $model"
+}
+
+main() {
+  require_root
+  install_prerequisites
+
+  echo "Welcome to the Raspberry Pi multi-version Minecraft installer."
+  if ! prompt_yes_no "Do you accept the Minecraft EULA?"; then
+    echo "The installation was cancelled because the EULA was not accepted."
+    exit 1
+  fi
+
+  local version
+  version="$(prompt_version)"
+  local resolved_version
+  resolved_version="$(resolve_version "$version")"
+  local server_type
+  server_type="$(prompt_server_type)"
+  local java_version
+  java_version="$(select_java_version "$resolved_version")"
+
+  install_java "$java_version"
+  local java_home
+  java_home="$(detect_java_home "$java_version")"
+
+  write_server_files
+  case "$server_type" in
+    vanilla)
+      download_vanilla "$resolved_version"
+      ;;
+    fabric)
+      download_fabric "$resolved_version"
+      ;;
+    paper)
+      download_paper "$resolved_version"
+      ;;
+  esac
+
+  write_systemd_service "$java_home"
+
+  if prompt_yes_no "Would you like to overclock your Raspberry Pi now?"; then
+    configure_overclock
+  fi
+
+  cat > "$SERVER_ROOT/README.txt" <<EOF
+Installed version: $resolved_version
+Server type: $server_type
+Java version: $java_version
+Service: minecraft-server.service
+Start: systemctl start minecraft-server.service
+Logs: journalctl -u minecraft-server.service -f
+EOF
+
+  echo "Installation complete."
+  echo "Server files are in: $SERVER_ROOT"
+  if command -v systemctl >/dev/null 2>&1; then
+    echo "Start the server with: systemctl start minecraft-server.service"
+    echo "Watch logs with: journalctl -u minecraft-server.service -f"
+  else
+    echo "Start the server with: ./server/start.sh"
+  fi
+}
+
+main "$@"

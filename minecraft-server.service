@@ -1,19 +1,14 @@
 [Unit]
-Description=Minecraft Fabric Server
+Description=Raspberry Pi Minecraft Server
 After=network.target
 
 [Service]
 Type=simple
-User=minecraft
-WorkingDirectory=/opt/minecraft-server
-ExecStart=/opt/minecraft-server/start.sh
-Restart=on-failure
-RestartSec=10
-
-# Performance settings
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=minecraft
+User=pi
+WorkingDirectory=/home/pi/pinecraft/server
+ExecStart=/usr/bin/java -Xms256M -Xmx2048M -jar /home/pi/pinecraft/server/server.jar --nogui
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
