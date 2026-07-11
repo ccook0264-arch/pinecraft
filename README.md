@@ -46,7 +46,6 @@ The installer now:
 - installs the matching Java runtime for the chosen version family
 - downloads the server jar for that server setup
 - creates a systemd service so the server starts on boot
-- optionally applies a conservative overclock profile for a Raspberry Pi
 
 ## Java selection
 
