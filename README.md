@@ -51,7 +51,7 @@ The installer now:
 
 - Minecraft 1.20.4 through 1.21.3 use Java 17
 - Minecraft 1.21.4 through 1.21.11 use Java 21
-- The 26.1 / 26.1.1 / 26.1.2 / 26.2 entries are mapped to the nearest supported 1.21.11-compatible setup for practical deployment
+- Minecraft 26.1 / 26.1.1 / 26.1.2 / 26.2 use Java 25
 
 ## Notes
 

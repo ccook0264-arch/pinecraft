@@ -212,11 +212,6 @@ uninstall_existing_server() {
   echo "Existing server install removed."
 }
 
-resolve_version() {
-  local requested="$1"
-  echo "$requested"
-}
-
 select_java_version() {
   local selected="$1"
   case "$selected" in
@@ -426,11 +421,11 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$SERVER_ROOT"
-  mkdir -p "$SERVER_ROOT/logs"
-  if [[ "${server_type:-}" == "fabric" ]]; then
-    mkdir -p "$SERVER_ROOT/mods"
-  fi
-  if [[ "${server_type:-}" == "paper" ]]; then
+mkdir -p "$SERVER_ROOT/logs"
+if [[ "${server_type:-}" == "fabric" ]]; then
+  mkdir -p "$SERVER_ROOT/mods"
+fi
+if [[ "${server_type:-}" == "paper" ]]; then
   mkdir -p "$SERVER_ROOT/plugins"
 fi
 if command -v java >/dev/null 2>&1; then
@@ -497,53 +492,6 @@ fix_runtime_permissions() {
   fi
 }
 
-configure_overclock() {
-  local model
-  model="$(cat /proc/device-tree/model 2>/dev/null || true)"
-  if [[ -z "$model" ]]; then
-    echo "Raspberry Pi model could not be detected. Skipping overclock."
-    return 0
-  fi
-
-  local config_file=""
-  if [[ -f /boot/firmware/config.txt ]]; then
-    config_file="/boot/firmware/config.txt"
-  elif [[ -f /boot/config.txt ]]; then
-    config_file="/boot/config.txt"
-  fi
-
-  if [[ -z "$config_file" ]]; then
-    echo "No Raspberry Pi config file found. Skipping overclock."
-    return 0
-  fi
-
-  local settings=""
-  case "$model" in
-    *"Raspberry Pi 4"*)
-      settings=$'arm_freq=1800\ngpu_freq=750\nover_voltage=6\nforce_turbo=1\n'
-      ;;
-    *"Raspberry Pi 3"*)
-      settings=$'arm_freq=1400\nover_voltage=4\n'
-      ;;
-    *"Raspberry Pi 5"*)
-      settings=$'arm_freq=2200\ngpu_freq=800\nover_voltage=6\nforce_turbo=1\n'
-      ;;
-    *)
-      settings=$'arm_freq=1500\nover_voltage=4\n'
-      ;;
-  esac
-
-  if ! grep -q "# Added by pinecraft installer" "$config_file" 2>/dev/null; then
-    cat >> "$config_file" <<EOF
-
-# Added by pinecraft installer
-$settings
-EOF
-  fi
-
-  echo "Overclock profile written to $config_file for $model"
-}
-
 main() {
   require_supported_linux
   require_root
@@ -576,8 +524,6 @@ main() {
   operator_name="$(prompt_operator_name)"
   local version
   version="$(prompt_version)"
-  local resolved_version
-  resolved_version="$(resolve_version "$version")"
   local server_type
   server_type="$(prompt_server_type)"
   local java_version
@@ -590,27 +536,23 @@ main() {
   write_server_files "$operator_name" "$server_type"
   case "$server_type" in
     vanilla)
-      download_vanilla "$resolved_version"
+      download_vanilla "$version"
       ;;
     fabric)
-      download_fabric "$resolved_version"
+      download_fabric "$version"
       ;;
     paper)
-      download_paper "$resolved_version"
+      download_paper "$version"
       ;;
   esac
 
   fix_runtime_permissions
   write_systemd_service "$java_home" "$server_type"
 
-  if prompt_yes_no "Would you like to overclock your Raspberry Pi now?"; then
-    configure_overclock
-  fi
-
   show_startup_logs
 
   cat > "$SERVER_ROOT/README.txt" <<EOF
-Installed version: $resolved_version
+Installed version: $version
 Server type: $server_type
 Java version: $java_version
 Service: minecraft-server.service
