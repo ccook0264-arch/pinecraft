@@ -264,6 +264,7 @@ download_fabric() {
     (cd "$SERVER_ROOT" && java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -installer "$installer_version" -downloadMinecraft >/dev/null 2>&1) || true
   fi
 
+  mkdir -p "$SERVER_ROOT/mods"
   if [[ -f "$SERVER_ROOT/server.jar" ]]; then
     return 0
   fi
@@ -474,6 +475,7 @@ Java version: $java_version
 Service: minecraft-server.service
 Start: systemctl start minecraft-server.service
 Logs: journalctl -u minecraft-server.service -f
+Fabric note: this installer prepares a Fabric server directory. Put Fabric mods into the mods/ folder manually.
 EOF
 
   echo "Installation complete."
