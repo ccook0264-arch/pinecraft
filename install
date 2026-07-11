@@ -364,6 +364,15 @@ show_startup_logs() {
   fi
 }
 
+fix_runtime_permissions() {
+  if [[ -d "$SERVER_ROOT" ]]; then
+    if [[ "$RUN_USER" != "root" ]]; then
+      chown -R "$RUN_USER":"$RUN_USER" "$SERVER_ROOT" 2>/dev/null || true
+    fi
+    chmod -R u+rwX,g+rX,o-rwx "$SERVER_ROOT" 2>/dev/null || true
+  fi
+}
+
 configure_overclock() {
   local model
   model="$(cat /proc/device-tree/model 2>/dev/null || true)"
@@ -448,6 +457,7 @@ main() {
       ;;
   esac
 
+  fix_runtime_permissions
   write_systemd_service "$java_home"
 
   if prompt_yes_no "Would you like to overclock your Raspberry Pi now?"; then
