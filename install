@@ -135,7 +135,7 @@ prompt_version() {
   if command -v whiptail >/dev/null 2>&1; then
     local menu_args=()
     for version_value in "${SUPPORTED_VERSIONS[@]}"; do
-      menu_args+=("$version_value" "$version_value")
+      menu_args+=("$version_value" "Minecraft $version_value")
     done
     local selected
     selected="$(whiptail --title "Minecraft Version" --menu "Select a version" 25 95 20 "${menu_args[@]}" 3>&1 1>&2 2>&3)" || true
@@ -157,6 +157,51 @@ prompt_version() {
     fi
     echo "Unsupported version. Please choose one from the list above."
   done
+}
+
+server_install_exists() {
+  if [[ -d "$SERVER_ROOT" ]]; then
+    if [[ -f "$SERVER_ROOT/server.jar" ]] || [[ -f "$SERVER_ROOT/fabric-server-launch.jar" ]] || [[ -f "$SERVER_ROOT/server.properties" ]]; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+prompt_existing_install_action() {
+  if command -v whiptail >/dev/null 2>&1; then
+    local choice
+    choice="$(whiptail --title "Existing Server Detected" --menu "A Minecraft server already exists. What would you like to do?" 15 80 3 \
+      "update" "Update server version/type and keep world data" \
+      "uninstall" "Remove the installed server and service" \
+      "cancel" "Cancel installer" 3>&1 1>&2 2>&3)" || true
+    if [[ -n "$choice" ]]; then
+      echo "$choice"
+      return 0
+    fi
+    echo "cancel"
+    return 0
+  fi
+
+  local action=""
+  while [[ "$action" != "update" && "$action" != "uninstall" && "$action" != "cancel" ]]; do
+    read -rp "Existing server detected. Choose [update/uninstall/cancel]: " action
+    action="${action,,}"
+  done
+  echo "$action"
+}
+
+uninstall_existing_server() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop minecraft-server.service >/dev/null 2>&1 || true
+    systemctl disable minecraft-server.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/minecraft-server.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+
+  rm -rf "$SERVER_ROOT"
+  rm -f "$SERVICE_FILE"
+  echo "Existing server install removed."
 }
 
 resolve_version() {
@@ -495,6 +540,23 @@ main() {
   require_supported_linux
   require_root
   install_prerequisites
+
+  if server_install_exists; then
+    local existing_action
+    existing_action="$(prompt_existing_install_action)"
+    case "$existing_action" in
+      uninstall)
+        uninstall_existing_server
+        exit 0
+        ;;
+      update)
+        ;;
+      *)
+        echo "Installation cancelled."
+        exit 1
+        ;;
+    esac
+  fi
 
   echo "Welcome to the Raspberry Pi multi-version Minecraft installer."
   if ! prompt_yes_no "Do you accept the Minecraft EULA?"; then
