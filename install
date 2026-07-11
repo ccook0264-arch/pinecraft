@@ -201,6 +201,15 @@ install_java() {
 
 detect_java_home() {
   local java_version="$1"
+  local java_bin
+  if command -v java >/dev/null 2>&1; then
+    java_bin="$(readlink -f "$(command -v java)" 2>/dev/null || true)"
+    if [[ -n "$java_bin" ]]; then
+      echo "$(dirname "$(dirname "$java_bin")")"
+      return 0
+    fi
+  fi
+
   local candidates=(
     "/usr/lib/jvm/java-${java_version}-openjdk-arm64"
     "/usr/lib/jvm/java-${java_version}-openjdk-armhf"
@@ -249,9 +258,9 @@ download_fabric() {
 
   curl -fsSL "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar" -o "$installer_jar"
 
-  if ! java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -downloadMinecraft >/dev/null 2>&1; then
+  if ! (cd "$SERVER_ROOT" && java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -downloadMinecraft >/dev/null 2>&1); then
     echo "Fabric installer failed for $resolved; trying fallback mode."
-    java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -installer "$installer_version" -downloadMinecraft >/dev/null 2>&1 || true
+    (cd "$SERVER_ROOT" && java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -installer "$installer_version" -downloadMinecraft >/dev/null 2>&1) || true
   fi
 
   if [[ -f "$SERVER_ROOT/server.jar" ]]; then
@@ -345,6 +354,16 @@ EOF
   fi
 }
 
+show_startup_logs() {
+  if command -v screen >/dev/null 2>&1 && command -v journalctl >/dev/null 2>&1 && [[ -t 0 ]]; then
+    screen -wipe >/dev/null 2>&1 || true
+    screen -dmS minecraft-logs bash -lc 'journalctl -u minecraft-server.service -f --no-pager' >/dev/null 2>&1 || true
+    sleep 2
+    echo "Attaching to the Minecraft startup log screen..."
+    screen -r minecraft-logs || true
+  fi
+}
+
 configure_overclock() {
   local model
   model="$(cat /proc/device-tree/model 2>/dev/null || true)"
@@ -434,6 +453,8 @@ main() {
   if prompt_yes_no "Would you like to overclock your Raspberry Pi now?"; then
     configure_overclock
   fi
+
+  show_startup_logs
 
   cat > "$SERVER_ROOT/README.txt" <<EOF
 Installed version: $resolved_version
