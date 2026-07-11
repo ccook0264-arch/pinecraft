@@ -161,27 +161,20 @@ prompt_version() {
 
 resolve_version() {
   local requested="$1"
-  case "$requested" in
-    "26.1"|"26.1.1"|"26.1.2"|"26.2")
-      echo "1.21.11"
-      ;;
-    *)
-      echo "$requested"
-      ;;
-  esac
+  echo "$requested"
 }
 
 select_java_version() {
-  local resolved="$1"
-  case "$resolved" in
+  local selected="$1"
+  case "$selected" in
+    "26.1"|"26.1.1"|"26.1.2"|"26.2")
+      echo "25"
+      ;;
     1.20.4|1.20.5|1.20.6|1.21|1.21.1|1.21.2|1.21.3)
       echo "17"
       ;;
     1.21.4|1.21.5|1.21.6|1.21.7|1.21.8|1.21.9|1.21.10|1.21.11)
       echo "21"
-      ;;
-    "26.1"|"26.1.1"|"26.1.2"|"26.2")
-      echo "25"
       ;;
     *)
       echo "21"
@@ -209,8 +202,11 @@ install_java() {
       apt-get install -y openjdk-17-jdk-headless || apt-get install -y openjdk-17-jre-headless || true
       ;;
     25)
-      apt-get install -y openjdk-25-jdk-headless || apt-get install -y openjdk-25-jre-headless || true
-      apt-get install -y openjdk-21-jdk-headless || true
+      if ! apt-get install -y openjdk-25-jdk-headless && ! apt-get install -y openjdk-25-jre-headless; then
+        echo "Java 25 packages are not available on this Ubuntu/Debian install."
+        echo "Please enable a repository that provides OpenJDK 25, then rerun ./install."
+        exit 1
+      fi
       ;;
     *)
       apt-get install -y openjdk-21-jdk-headless || apt-get install -y openjdk-21-jre-headless || true
@@ -223,15 +219,6 @@ install_java() {
 
 detect_java_home() {
   local java_version="$1"
-  local java_bin
-  if command -v java >/dev/null 2>&1; then
-    java_bin="$(readlink -f "$(command -v java)" 2>/dev/null || true)"
-    if [[ -n "$java_bin" ]]; then
-      echo "$(dirname "$(dirname "$java_bin")")"
-      return 0
-    fi
-  fi
-
   local candidates=(
     "/usr/lib/jvm/java-${java_version}-openjdk-arm64"
     "/usr/lib/jvm/java-${java_version}-openjdk-armhf"
@@ -248,6 +235,15 @@ detect_java_home() {
       return 0
     fi
   done
+
+  local java_bin
+  if command -v java >/dev/null 2>&1; then
+    java_bin="$(readlink -f "$(command -v java)" 2>/dev/null || true)"
+    if [[ -n "$java_bin" ]]; then
+      echo "$(dirname "$(dirname "$java_bin")")"
+      return 0
+    fi
+  fi
   echo "/usr/bin"
 }
 
@@ -267,7 +263,6 @@ download_vanilla() {
 download_fabric() {
   local resolved="$1"
   mkdir -p "$SERVER_ROOT"
-  rm -f "$SERVER_ROOT/server.jar"
   rm -f "$SERVER_ROOT/fabric-server-launch.jar"
   local loader_json
   loader_json="$(curl -fsSL "https://meta.fabricmc.net/v2/versions/loader/$resolved" 2>/dev/null || true)"
@@ -282,7 +277,6 @@ download_fabric() {
 
   local launcher_url="https://meta.fabricmc.net/v2/versions/loader/$resolved/$loader_version/$installer_version/server/jar"
   if curl -fsSL "$launcher_url" -o "$SERVER_ROOT/fabric-server-launch.jar" 2>/dev/null; then
-    cp "$SERVER_ROOT/fabric-server-launch.jar" "$SERVER_ROOT/server.jar"
     mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/logs"
     return 0
   fi
@@ -297,10 +291,6 @@ download_fabric() {
 
   mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/logs"
   if [[ -f "$SERVER_ROOT/fabric-server-launch.jar" ]]; then
-    cp "$SERVER_ROOT/fabric-server-launch.jar" "$SERVER_ROOT/server.jar"
-    return 0
-  fi
-  if [[ -f "$SERVER_ROOT/server.jar" ]]; then
     return 0
   fi
 
@@ -330,10 +320,20 @@ write_server_files() {
   local operator_name="$1"
   local server_type="${2:-}"
   mkdir -p "$SERVER_ROOT"
-  mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/logs"
-  if [[ "$server_type" == "paper" ]]; then
-    mkdir -p "$SERVER_ROOT/plugins"
-  fi
+  mkdir -p "$SERVER_ROOT/logs"
+  case "$server_type" in
+    fabric)
+      mkdir -p "$SERVER_ROOT/mods"
+      rm -rf "$SERVER_ROOT/plugins"
+      ;;
+    paper)
+      mkdir -p "$SERVER_ROOT/plugins"
+      rm -rf "$SERVER_ROOT/mods"
+      ;;
+    *)
+      rm -rf "$SERVER_ROOT/mods" "$SERVER_ROOT/plugins"
+      ;;
+  esac
   cat > "$SERVER_ROOT/eula.txt" <<'EOF'
 eula=true
 EOF
@@ -373,11 +373,17 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$SERVER_ROOT"
-mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/logs"
-if [[ "${server_type:-}" == "paper" ]]; then
+  mkdir -p "$SERVER_ROOT/logs"
+  if [[ "${server_type:-}" == "fabric" ]]; then
+    mkdir -p "$SERVER_ROOT/mods"
+  fi
+  if [[ "${server_type:-}" == "paper" ]]; then
   mkdir -p "$SERVER_ROOT/plugins"
 fi
 if command -v java >/dev/null 2>&1; then
+  if [[ "${server_type:-}" == "fabric" ]]; then
+    exec java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/fabric-server-launch.jar" --nogui
+  fi
   exec java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/server.jar" --nogui
 else
   echo "Java is not installed. Please rerun the installer."
@@ -389,7 +395,12 @@ EOF
 
 write_systemd_service() {
   local java_home="$1"
+  local server_type="$2"
   ensure_systemd || true
+  local jar_path="$SERVER_ROOT/server.jar"
+  if [[ "$server_type" == "fabric" ]]; then
+    jar_path="$SERVER_ROOT/fabric-server-launch.jar"
+  fi
   cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Raspberry Pi Minecraft Server
@@ -399,7 +410,7 @@ After=network.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$SERVER_ROOT
-ExecStart=$java_home/bin/java -Xms256M -Xmx1536M -jar $SERVER_ROOT/server.jar --nogui
+ExecStart=$java_home/bin/java -Xms256M -Xmx1536M -jar $jar_path --nogui
 Restart=always
 RestartSec=5
 
@@ -500,7 +511,7 @@ main() {
   local server_type
   server_type="$(prompt_server_type)"
   local java_version
-  java_version="$(select_java_version "$resolved_version")"
+  java_version="$(select_java_version "$version")"
 
   install_java "$java_version"
   local java_home
@@ -520,7 +531,7 @@ main() {
   esac
 
   fix_runtime_permissions
-  write_systemd_service "$java_home"
+  write_systemd_service "$java_home" "$server_type"
 
   if prompt_yes_no "Would you like to overclock your Raspberry Pi now?"; then
     configure_overclock
