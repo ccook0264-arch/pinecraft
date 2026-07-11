@@ -260,6 +260,8 @@ download_vanilla() {
 download_fabric() {
   local resolved="$1"
   mkdir -p "$SERVER_ROOT"
+  rm -f "$SERVER_ROOT/server.jar"
+  rm -f "$SERVER_ROOT/fabric-server-launch.jar"
   local installer_jar="$SERVER_ROOT/fabric-installer.jar"
   local loader_json
   loader_json="$(curl -fsSL "https://meta.fabricmc.net/v2/versions/loader/$resolved")"
@@ -279,12 +281,12 @@ download_fabric() {
     (cd "$SERVER_ROOT" && java -jar "$installer_jar" server -mcversion "$resolved" -loader "$loader_version" -installer "$installer_version" -downloadMinecraft >/dev/null 2>&1) || true
   fi
 
-  mkdir -p "$SERVER_ROOT/mods"
-  if [[ -f "$SERVER_ROOT/server.jar" ]]; then
-    return 0
-  fi
+  mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs" "$SERVER_ROOT/plugins"
   if [[ -f "$SERVER_ROOT/fabric-server-launch.jar" ]]; then
     cp "$SERVER_ROOT/fabric-server-launch.jar" "$SERVER_ROOT/server.jar"
+    return 0
+  fi
+  if [[ -f "$SERVER_ROOT/server.jar" ]]; then
     return 0
   fi
 
