@@ -116,6 +116,21 @@ prompt_server_type() {
   echo "$server_type"
 }
 
+prompt_operator_name() {
+  if command -v whiptail >/dev/null 2>&1; then
+    local operator_name
+    operator_name="$(whiptail --title "Operator Setup" --inputbox "Enter a player name to make operator (leave blank to skip)" 10 60 3>&1 1>&2 2>&3)" || true
+    operator_name="${operator_name//[[:space:]]/}"
+    echo "$operator_name"
+    return 0
+  fi
+
+  local operator_name=""
+  read -rp "Set operator username (leave blank to skip): " operator_name
+  operator_name="${operator_name//[[:space:]]/}"
+  echo "$operator_name"
+}
+
 prompt_version() {
   if command -v whiptail >/dev/null 2>&1; then
     local menu_args=()
@@ -296,6 +311,7 @@ download_paper() {
 }
 
 write_server_files() {
+  local operator_name="$1"
   mkdir -p "$SERVER_ROOT"
   cat > "$SERVER_ROOT/eula.txt" <<'EOF'
 eula=true
@@ -314,6 +330,23 @@ max-players=10
 difficulty=normal
 pvp=true
 EOF
+
+  if [[ -n "$operator_name" ]]; then
+    cat > "$SERVER_ROOT/ops.json" <<EOF
+[
+  {
+    "uuid": "00000000-0000-0000-0000-000000000000",
+    "name": "$operator_name",
+    "level": 4,
+    "bypassesPlayerLimit": false
+  }
+]
+EOF
+    printf '%s
+' "$operator_name" > "$SERVER_ROOT/ops.txt"
+  else
+    rm -f "$SERVER_ROOT/ops.json" "$SERVER_ROOT/ops.txt"
+  fi
 
   cat > "$SERVER_ROOT/start.sh" <<EOF
 #!/usr/bin/env bash
@@ -433,6 +466,8 @@ main() {
     exit 1
   fi
 
+  local operator_name
+  operator_name="$(prompt_operator_name)"
   local version
   version="$(prompt_version)"
   local resolved_version
@@ -446,7 +481,7 @@ main() {
   local java_home
   java_home="$(detect_java_home "$java_version")"
 
-  write_server_files
+  write_server_files "$operator_name"
   case "$server_type" in
     vanilla)
       download_vanilla "$resolved_version"
