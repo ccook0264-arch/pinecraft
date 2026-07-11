@@ -174,7 +174,7 @@ select_java_version() {
       echo "21"
       ;;
     "26.1"|"26.1.1"|"26.1.2"|"26.2")
-      echo "25"
+      echo "25      screen -r mc"
       ;;
     *)
       echo "21"
@@ -313,6 +313,7 @@ download_paper() {
 write_server_files() {
   local operator_name="$1"
   mkdir -p "$SERVER_ROOT"
+  mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs" "$SERVER_ROOT/plugins"
   cat > "$SERVER_ROOT/eula.txt" <<'EOF'
 eula=true
 EOF
@@ -352,6 +353,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$SERVER_ROOT"
+mkdir -p "$SERVER_ROOT/mods" "$SERVER_ROOT/config" "$SERVER_ROOT/defaultconfigs" "$SERVER_ROOT/logs" "$SERVER_ROOT/plugins"
 if command -v java >/dev/null 2>&1; then
   exec java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/server.jar" --nogui
 else
