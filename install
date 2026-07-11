@@ -134,13 +134,21 @@ prompt_operator_name() {
 prompt_version() {
   if command -v whiptail >/dev/null 2>&1; then
     local menu_args=()
+    local idx=0
     for version_value in "${SUPPORTED_VERSIONS[@]}"; do
-      menu_args+=("$version_value" "Minecraft $version_value")
+      idx=$((idx + 1))
+      menu_args+=("$idx" "$version_value")
     done
-    local selected
-    selected="$(whiptail --title "Minecraft Version" --menu "Select a version" 25 95 20 "${menu_args[@]}" 3>&1 1>&2 2>&3)" || true
-    if [[ -n "$selected" ]]; then
-      echo "$selected"
+    local selected_idx
+    selected_idx="$(whiptail --title "Minecraft Version" --menu "Select a version" 25 95 20 "${menu_args[@]}" 3>&1 1>&2 2>&3)" || true
+    if [[ -n "$selected_idx" && "$selected_idx" =~ ^[0-9]+$ ]]; then
+      if (( selected_idx >= 1 && selected_idx <= ${#SUPPORTED_VERSIONS[@]} )); then
+        echo "${SUPPORTED_VERSIONS[$((selected_idx - 1))]}"
+        return 0
+      fi
+    fi
+    if [[ -n "$selected_idx" ]]; then
+      echo "$selected_idx"
       return 0
     fi
   fi
@@ -489,6 +497,53 @@ fix_runtime_permissions() {
   fi
 }
 
+configure_overclock() {
+  local model
+  model="$(cat /proc/device-tree/model 2>/dev/null || true)"
+  if [[ -z "$model" ]]; then
+    echo "Raspberry Pi model could not be detected. Skipping overclock."
+    return 0
+  fi
+
+  local config_file=""
+  if [[ -f /boot/firmware/config.txt ]]; then
+    config_file="/boot/firmware/config.txt"
+  elif [[ -f /boot/config.txt ]]; then
+    config_file="/boot/config.txt"
+  fi
+
+  if [[ -z "$config_file" ]]; then
+    echo "No Raspberry Pi config file found. Skipping overclock."
+    return 0
+  fi
+
+  local settings=""
+  case "$model" in
+    *"Raspberry Pi 4"*)
+      settings=$'arm_freq=1800\ngpu_freq=750\nover_voltage=6\nforce_turbo=1\n'
+      ;;
+    *"Raspberry Pi 3"*)
+      settings=$'arm_freq=1400\nover_voltage=4\n'
+      ;;
+    *"Raspberry Pi 5"*)
+      settings=$'arm_freq=2200\ngpu_freq=800\nover_voltage=6\nforce_turbo=1\n'
+      ;;
+    *)
+      settings=$'arm_freq=1500\nover_voltage=4\n'
+      ;;
+  esac
+
+  if ! grep -q "# Added by pinecraft installer" "$config_file" 2>/dev/null; then
+    cat >> "$config_file" <<EOF
+
+# Added by pinecraft installer
+$settings
+EOF
+  fi
+
+  echo "Overclock profile written to $config_file for $model"
+}
+
 main() {
   require_supported_linux
   require_root
@@ -547,6 +602,10 @@ main() {
 
   fix_runtime_permissions
   write_systemd_service "$java_home" "$server_type"
+
+  if prompt_yes_no "Would you like to overclock your Raspberry Pi now?"; then
+    configure_overclock
+  fi
 
   show_startup_logs
 
