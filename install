@@ -430,9 +430,9 @@ if [[ "${server_type:-}" == "paper" ]]; then
 fi
 if command -v java >/dev/null 2>&1; then
   if [[ "${server_type:-}" == "fabric" ]]; then
-    exec java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/fabric-server-launch.jar" --nogui
+    exec screen -DmS minecraft java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/fabric-server-launch.jar" --nogui
   fi
-  exec java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/server.jar" --nogui
+  exec screen -DmS minecraft java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/server.jar" --nogui
 else
   echo "Java is not installed. Please rerun the installer."
   exit 1
@@ -458,7 +458,9 @@ After=network.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$SERVER_ROOT
-ExecStart=$java_home/bin/java -Xms256M -Xmx1536M -jar $jar_path --nogui
+ExecStart=/usr/bin/screen -DmS minecraft $java_home/bin/java -Xms256M -Xmx1536M -jar $jar_path --nogui
+ExecStop=/usr/bin/screen -S minecraft -X stuff 'stop\n'
+TimeoutStopSec=30
 Restart=always
 RestartSec=5
 
@@ -558,6 +560,7 @@ Java version: $java_version
 Service: minecraft-server.service
 Start: systemctl start minecraft-server.service
 Logs: journalctl -u minecraft-server.service -f
+Console: screen -r minecraft (run as $RUN_USER; use 'sudo -u $RUN_USER -H screen -r minecraft' if logged in as another user). Detach without stopping the server with Ctrl+A then D.
 Fabric note: this installer prepares a Fabric server directory. Put Fabric mods into the mods/ folder manually.
 EOF
 
@@ -569,6 +572,7 @@ EOF
   else
     echo "Start the server with: ./server/start.sh"
   fi
+  echo "Open the live server console with: sudo -u $RUN_USER -H screen -r minecraft (detach with Ctrl+A then D, do not close the window)"
 }
 
 main "$@"

@@ -53,6 +53,22 @@ The installer now:
 - Minecraft 1.21.4 through 1.21.11 use Java 21
 - Minecraft 26.1 / 26.1.1 / 26.1.2 / 26.2 use Java 25
 
+## Server console access
+
+The systemd service runs the server inside a named `screen` session called `minecraft`, so you can attach to the live console at any time:
+
+```bash
+screen -r minecraft
+```
+
+Detach again without stopping the server with `Ctrl+A` then `D`. If you're logged in as a different user than the one running the service, use:
+
+```bash
+sudo -u pi -H screen -r minecraft
+```
+
+(replace `pi` with the account the installer ran as).
+
 ## Notes
 
 - This installer is designed for Ubuntu Linux and Ubuntu Server on Raspberry Pi (and other Debian/Ubuntu-based systems).
