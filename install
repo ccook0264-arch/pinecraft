@@ -455,7 +455,7 @@ Description=Raspberry Pi Minecraft Server
 After=network.target
 
 [Service]
-Type=simple
+Type=forking
 User=$RUN_USER
 WorkingDirectory=$SERVER_ROOT
 ExecStart=/usr/bin/screen -DmS minecraft $java_home/bin/java -Xms256M -Xmx1536M -jar $jar_path --nogui
