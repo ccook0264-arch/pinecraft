@@ -38,11 +38,22 @@ If your system prompts for sudo, use:
 sudo ./install
 ```
 
+To update an existing server from GitHub while keeping its world data, run:
+
+```bash
+cd pinecraft
+git pull --ff-only
+sudo ./install
+```
+
+Choose **Update** in the installer, then enter the amount of RAM for the server.
+
 The installer now:
 
 - prompts you to accept the Minecraft EULA
 - asks which Minecraft version you want
 - asks whether to build a vanilla, fabric or paper server
+- asks how much RAM to allocate to the server (default: 2G)
 - installs the matching Java runtime for the chosen version family
 - downloads the server jar for that server setup
 - creates a systemd service so the server starts on boot

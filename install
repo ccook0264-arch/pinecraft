@@ -116,6 +116,23 @@ prompt_server_type() {
   echo "$server_type"
 }
 
+prompt_memory() {
+  local memory=""
+  if command -v whiptail >/dev/null 2>&1; then
+    memory="$(whiptail --title "Server Memory" --inputbox "How much RAM should the server use? Enter a value such as 2G or 4096M (default: 2G)" 10 70 "2G" 3>&1 1>&2 2>&3)" || true
+  else
+    read -rp "Maximum server RAM [2G]: " memory
+  fi
+
+  memory="${memory//[[:space:]]/}"
+  [[ -z "$memory" ]] && memory="2G"
+  if [[ ! "$memory" =~ ^[1-9][0-9]*(M|G)$ ]]; then
+    echo "Invalid RAM value. Use a whole number followed by M or G, such as 2G or 4096M." >&2
+    return 1
+  fi
+  echo "$memory"
+}
+
 prompt_operator_name() {
   if command -v whiptail >/dev/null 2>&1; then
     local operator_name
@@ -367,6 +384,7 @@ download_paper() {
 write_server_files() {
   local operator_name="$1"
   local server_type="${2:-}"
+  local memory="${3:-2G}"
   mkdir -p "$SERVER_ROOT"
   mkdir -p "$SERVER_ROOT/logs"
   case "$server_type" in
@@ -430,9 +448,9 @@ if [[ "${server_type:-}" == "paper" ]]; then
 fi
 if command -v java >/dev/null 2>&1; then
   if [[ "${server_type:-}" == "fabric" ]]; then
-    exec screen -DmS minecraft java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/fabric-server-launch.jar" --nogui
+    exec screen -DmS minecraft java -Xms256M -Xmx$memory -jar "$SERVER_ROOT/fabric-server-launch.jar" --nogui
   fi
-  exec screen -DmS minecraft java -Xms256M -Xmx1536M -jar "$SERVER_ROOT/server.jar" --nogui
+  exec screen -DmS minecraft java -Xms256M -Xmx$memory -jar "$SERVER_ROOT/server.jar" --nogui
 else
   echo "Java is not installed. Please rerun the installer."
   exit 1
@@ -444,6 +462,7 @@ EOF
 write_systemd_service() {
   local java_home="$1"
   local server_type="$2"
+  local memory="${3:-2G}"
   ensure_systemd || true
   local jar_path="$SERVER_ROOT/server.jar"
   if [[ "$server_type" == "fabric" ]]; then
@@ -458,7 +477,7 @@ After=network.target
 Type=forking
 User=$RUN_USER
 WorkingDirectory=$SERVER_ROOT
-ExecStart=/usr/bin/screen -DmS minecraft $java_home/bin/java -Xms256M -Xmx1536M -jar $jar_path --nogui
+ExecStart=/usr/bin/screen -DmS minecraft $java_home/bin/java -Xms256M -Xmx$memory -jar $jar_path --nogui
 ExecStop=/usr/bin/screen -S minecraft -X stuff 'stop\n'
 TimeoutStopSec=30
 Restart=always
@@ -499,6 +518,7 @@ main() {
   require_root
   install_prerequisites
 
+  local memory=""
   if server_install_exists; then
     local existing_action
     existing_action="$(prompt_existing_install_action)"
@@ -508,6 +528,9 @@ main() {
         exit 0
         ;;
       update)
+        while ! memory="$(prompt_memory)"; do
+          echo "Please enter a valid RAM value."
+        done
         ;;
       *)
         echo "Installation cancelled."
@@ -528,6 +551,11 @@ main() {
   version="$(prompt_version)"
   local server_type
   server_type="$(prompt_server_type)"
+  if [[ -z "$memory" ]]; then
+    while ! memory="$(prompt_memory)"; do
+      echo "Please enter a valid RAM value."
+    done
+  fi
   local java_version
   java_version="$(select_java_version "$version")"
 
@@ -535,7 +563,7 @@ main() {
   local java_home
   java_home="$(detect_java_home "$java_version")"
 
-  write_server_files "$operator_name" "$server_type"
+  write_server_files "$operator_name" "$server_type" "$memory"
   case "$server_type" in
     vanilla)
       download_vanilla "$version"
@@ -549,7 +577,7 @@ main() {
   esac
 
   fix_runtime_permissions
-  write_systemd_service "$java_home" "$server_type"
+  write_systemd_service "$java_home" "$server_type" "$memory"
 
   show_startup_logs
 
@@ -557,6 +585,7 @@ main() {
 Installed version: $version
 Server type: $server_type
 Java version: $java_version
+Maximum RAM: $memory
 Service: minecraft-server.service
 Start: systemctl start minecraft-server.service
 Logs: journalctl -u minecraft-server.service -f
