@@ -474,11 +474,12 @@ Description=Raspberry Pi Minecraft Server
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 User=$RUN_USER
 WorkingDirectory=$SERVER_ROOT
 ExecStart=/usr/bin/screen -DmS minecraft $java_home/bin/java -Xms256M -Xmx$memory -jar $jar_path --nogui
 ExecStop=/usr/bin/screen -S minecraft -X stuff 'stop\n'
+TimeoutStartSec=0
 TimeoutStopSec=30
 Restart=always
 RestartSec=5
